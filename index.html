@@ -1,0 +1,192 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Room Layout 2D</title>
+<!-- iOSホーム画面アイコン（データURIなので画像アップ不要） -->
+<link rel="apple-touch-icon" href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAMAAAADACAQAAAB3o9sGAAAABGdBTUEAALGPC/xhBQAA...">
+<style>
+  *{box-sizing:border-box} html,body{height:100%;margin:0;background:#0f1115;color:#e6e6e6;font-family:system-ui,-apple-system,Segoe UI,Roboto}
+  header{display:flex;gap:12px;flex-wrap:wrap;align-items:center;padding:10px 12px;border-bottom:1px solid #24262b;background:#15171c;position:sticky;top:0}
+  header h1{font-size:16px;margin:0 8px 0 0}
+  .group{display:flex;align-items:center;gap:8px}
+  header button, header select, header input{background:#1c1f27;color:#e6e6e6;border:1px solid #3a3f4b;border-radius:8px;padding:8px 10px}
+  main{display:flex;height:calc(100% - 64px);min-height:300px}
+  aside{width:240px;border-right:1px solid #24262b;padding:12px;overflow:auto;background:#13151a}
+  aside h2{margin:0 0 8px 0;font-size:14px;color:#c9d1d9}
+  .add{display:block;width:100%;margin:6px 0;padding:10px;border:1px solid #3a3f4b;background:#1c1f27;color:#e6e6e6;border-radius:8px;cursor:pointer}
+  .add:hover{background:#222632}
+  .stage-wrap{flex:1;position:relative;display:flex;justify-content:center;align-items:center;padding:8px}
+  #stage{background:#0b0d11;border:1px solid #24262b;border-radius:10px;max-width:100%;height:auto;touch-action:none}
+  #hud{position:absolute;left:16px;bottom:16px;background:rgba(0,0,0,.55);padding:6px 8px;border-radius:6px;font-size:12px}
+  footer{height:40px;display:flex;align-items:center;padding:0 12px;border-top:1px solid #24262b;background:#15171c;color:#b1b8c6}
+  label{font-size:12px;color:#b1b8c6}
+</style>
+</head>
+<body>
+<header>
+  <h1>Room Layout 2D</h1>
+  <div class="group">
+    <button id="btnSave">Save</button>
+    <button id="btnLoad">Load</button>
+    <button id="btnClear">Clear</button>
+  </div>
+  <div class="group">
+    <label>Grid <input id="gridSize" type="number" min="5" max="100" step="5" value="10" style="width:64px"> cm</label>
+    <label><input type="checkbox" id="snap"> Snap</label>
+  </div>
+  <div class="group">
+    <label>Floor
+      <select id="floor">
+        <option value="wood">Wood</option>
+        <option value="concrete">Concrete</option>
+        <option value="plain" selected>Plain</option>
+      </select>
+    </label>
+    <label><input type="checkbox" id="showNames" checked> Show Names</label>
+  </div>
+</header>
+
+<main>
+  <aside>
+    <h2>Palette</h2>
+    <button class="add" data-type="Sofa"  data-w="180" data-h="90">Sofa 180×90</button>
+    <button class="add" data-type="Table" data-w="140" data-h="80">Table 140×80</button>
+    <button class="add" data-type="Chair" data-w="50"  data-h="50">Chair 50×50</button>
+    <button class="add" data-type="Shelf" data-w="120" data-h="40">Shelf 120×40</button>
+    <button class="add" data-type="Bed"   data-w="206" data-h="118">Bed 206×118</button>
+    <hr>
+    <div class="tips">
+      <strong>Tips</strong>
+      <ul>
+        <li>Drag to move</li>
+        <li>Rotate: R (15° step)</li>
+        <li>Duplicate: D</li>
+        <li>Delete: Del/Backspace</li>
+        <li>Resize: drag a corner handle</li>
+      </ul>
+    </div>
+  </aside>
+  <section class="stage-wrap">
+    <canvas id="stage" width="1200" height="800"></canvas>
+    <div id="hud"></div>
+  </section>
+</main>
+<footer><span>Data saves in your browser (localStorage). Add to Home Screen from Safari.</span></footer>
+
+<script>
+const canvas = document.getElementById('stage');
+const ctx = canvas.getContext('2d');
+const hud = document.getElementById('hud');
+const btnSave = document.getElementById('btnSave');
+const btnLoad = document.getElementById('btnLoad');
+const btnClear = document.getElementById('btnClear');
+const gridSizeInput = document.getElementById('gridSize');
+const snapInput = document.getElementById('snap');
+const floorSel = document.getElementById('floor');
+const showNamesInput = document.getElementById('showNames');
+
+const CM_TO_PX = 4;
+let gridCm = parseInt(gridSizeInput.value,10) || 10;
+let snap = false;
+let floorStyle = floorSel.value;
+let showNames = showNamesInput.checked;
+
+gridSizeInput.addEventListener('change', ()=>{ gridCm = clamp(parseInt(gridSizeInput.value,10)||10, 5, 100); draw(); });
+snapInput.addEventListener('change', ()=>{ snap = snapInput.checked; draw(); });
+floorSel.addEventListener('change', ()=>{ floorStyle = floorSel.value; draw(); });
+showNamesInput.addEventListener('change', ()=>{ showNames = showNamesInput.checked; draw(); });
+
+document.querySelectorAll('.add').forEach(b=> b.addEventListener('click', ()=>{
+  const type = b.dataset.type, w = parseFloat(b.dataset.w), h = parseFloat(b.dataset.h);
+  addItem(type, 100, 100, w, h, 0); draw();
+}));
+
+function clamp(v,min,max){ return Math.max(min, Math.min(max,v)); }
+
+let items = []; let idSeq = 1; let selectedId = null;
+
+function addItem(type, x, y, w, h, rot){
+  items.push({ id:idSeq++, type, x, y, w:w*CM_TO_PX, h:h*CM_TO_PX, rot:rot||0, selected:false });
+}
+function removeSelected(){ items = items.filter(it => !it.selected); selectedId = null; }
+function duplicateSelected(){ const s = items.find(it=>it.selected); if(!s) return; addItem(s.type, s.x+20, s.y+20, s.w/CM_TO_PX, s.h/CM_TO_PX, s.rot); }
+function pointInItem(px, py, it){
+  const cx = it.x + it.w/2, cy = it.y + it.h/2, dx = px - cx, dy = py - cy;
+  const s = Math.sin(it.rot), c = Math.cos(it.rot);
+  const rx = c*dx + s*dy, ry = -s*dx + c*dy;
+  return Math.abs(rx) <= it.w/2 && Math.abs(ry) <= it.h/2;
+}
+function toggleSelectAt(px, py){
+  for(let i=items.length-1;i>=0;i--){ if(pointInItem(px, py, items[i])){ items.forEach(it=>it.selected=false); items[i].selected = true; selectedId = items[i].id; return true; } }
+  items.forEach(it=>it.selected=false); selectedId = null; return false;
+}
+
+let drag = null;
+function getPoint(e){ const r = canvas.getBoundingClientRect(); if(e.touches&&e.touches[0]) return {x:e.touches[0].clientX-r.left,y:e.touches[0].clientY-r.top}; return {x:e.clientX-r.left,y:e.clientY-r.top}; }
+canvas.addEventListener('mousedown', onDown); canvas.addEventListener('mousemove', onMove); window.addEventListener('mouseup', onUp);
+canvas.addEventListener('touchstart', onDown,{passive:false}); canvas.addEventListener('touchmove', onMove,{passive:false}); window.addEventListener('touchend', onUp);
+
+function onDown(e){ e.preventDefault(); const {x:px,y:py}=getPoint(e); const hit = hitHandle(px,py);
+  if(hit){ drag={mode:'resize',id:hit.id,corner:hit.corner}; return; }
+  if(toggleSelectAt(px,py)){ const it=items.find(i=>i.selected); drag={mode:'move',id:it.id,offx:px-it.x,offy:py-it.y}; } else { drag=null; }
+  draw();
+}
+function onMove(e){ if(!drag) return; e.preventDefault(); const {x:px,y:py}=getPoint(e); const it=items.find(i=>i.id===drag.id); if(!it) return;
+  if(drag.mode==='move'){ let nx=px-drag.offx, ny=py-drag.offy; if(snap){ const g=gridCm*CM_TO_PX; nx=Math.round(nx/g)*g; ny=Math.round(ny/g)*g; } it.x=nx; it.y=ny; }
+  else { if(drag.corner==='se'){ it.w=Math.max(20,px-it.x); it.h=Math.max(20,py-it.y); }
+         if(drag.corner==='ne'){ it.h=Math.max(20,(it.y+it.h)-py); it.y=(it.y+it.h)-it.h; it.w=Math.max(20,px-it.x); }
+         if(drag.corner==='sw'){ it.w=Math.max(20,(it.x+it.w)-px); it.x=(it.x+it.w)-it.w; it.h=Math.max(20,py-it.y); }
+         if(drag.corner==='nw'){ it.w=Math.max(20,(it.x+it.w)-px); it.x=(it.x+it.w)-it.w; it.h=Math.max(20,(it.y+it.h)-py); it.y=(it.y+it.h)-it.h; }
+         if(snap){ const g=gridCm*CM_TO_PX; it.w=Math.round(it.w/g)*g; it.h=Math.round(it.h/g)*g; it.x=Math.round(it.x/g)*g; it.y=Math.round(it.y/g)*g; } }
+  draw();
+}
+function onUp(){ drag=null; }
+function handleRects(it){ const size=12; return [
+  {corner:'nw', x:it.x-size,y:it.y-size,w:size,h:size},
+  {corner:'ne', x:it.x+it.w,y:it.y-size,w:size,h:size},
+  {corner:'sw', x:it.x-size,y:it.y+it.h,w:size,h:size},
+  {corner:'se', x:it.x+it.w,y:it.y+it.h,w:size,h:size},
+];}
+function hitHandle(px,py){ const s=items.find(it=>it.selected); if(!s) return null; for(const h of handleRects(s)){ if(px>=h.x&&px<=h.x+h.w&&py>=h.y&&py<=h.y+h.h) return {id:s.id,corner:h.corner}; } return null; }
+
+window.addEventListener('keydown',(e)=>{ const s=items.find(it=>it.selected);
+  if(e.key==='Delete'||e.key==='Backspace'){ removeSelected(); draw(); }
+  if(!s) return;
+  if(e.key.toLowerCase()==='r'){ s.rot=(s.rot+Math.PI/12)%(Math.PI*2); draw(); } // 15°
+  if(e.key.toLowerCase()==='d'){ duplicateSelected(); draw(); }
+});
+
+btnSave.addEventListener('click', ()=>{ const payload={gridCm,floorStyle,showNames,items:items.map(({id,type,x,y,w,h,rot})=>({id,type,x,y,w,h,rot})),v:3}; localStorage.setItem('roomlayout_v3', JSON.stringify(payload)); flash('Saved'); });
+btnLoad.addEventListener('click', ()=>{ const str=localStorage.getItem('roomlayout_v3'); if(!str){ flash('No data'); return; }
+  const data=JSON.parse(str); gridCm=data.gridCm||10; gridSizeInput.value=gridCm; floorStyle=data.floorStyle||'plain'; floorSel.value=floorStyle;
+  showNames=(typeof data.showNames==='boolean')?data.showNames:true; showNamesInput.checked=showNames;
+  items=(data.items||[]).map(it=>({...it,selected:false})); idSeq=items.reduce((m,it)=>Math.max(m,it.id),0)+1; draw(); flash('Loaded'); });
+btnClear.addEventListener('click', ()=>{ items=[]; selectedId=null; draw(); flash('Cleared'); });
+
+function flash(msg){ hud.textContent=msg; hud.style.opacity=1; setTimeout(()=>hud.style.opacity=0.25,800); }
+
+function drawFloor(){
+  if(floorStyle==='plain'){ ctx.fillStyle='#0b0d11'; ctx.fillRect(0,0,canvas.width,canvas.height); return; }
+  const pat=document.createElement('canvas'); const pctx=pat.getContext('2d'); pat.width=pat.height=64;
+  if(floorStyle==='wood'){ pctx.fillStyle='#2a2118'; pctx.fillRect(0,0,64,64); pctx.fillStyle='#3a2d21'; for(let i=0;i<64;i+=16){ pctx.fillRect(0,i,64,8); }
+    pctx.strokeStyle='rgba(255,255,255,0.04)'; pctx.lineWidth=1; for(let i=0;i<64;i+=8){ pctx.beginPath(); pctx.moveTo(0,i+Math.sin(i)*1); pctx.lineTo(64,i+Math.sin(i)*1); pctx.stroke(); } }
+  else { const g=pctx.createLinearGradient(0,0,64,64); g.addColorStop(0,'#1a1d22'); g.addColorStop(1,'#22262c'); pctx.fillStyle=g; pctx.fillRect(0,0,64,64);
+    pctx.fillStyle='rgba(255,255,255,0.03)'; for(let i=0;i<80;i++){ const x=Math.random()*64,y=Math.random()*64,r=Math.random()*1.5; pctx.beginPath(); pctx.arc(x,y,r,0,Math.PI*2); pctx.fill(); } }
+  const pattern=ctx.createPattern(pat,'repeat'); ctx.fillStyle=pattern; ctx.fillRect(0,0,canvas.width,canvas.height);
+}
+function drawGrid(){ const g=gridCm*CM_TO_PX; ctx.strokeStyle='#1c222b'; ctx.lineWidth=1;
+  for(let x=0;x<=canvas.width;x+=g){ ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,canvas.height); ctx.stroke(); }
+  for(let y=0;y<=canvas.height;y+=g){ ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(canvas.width,y); ctx.stroke(); }
+  ctx.fillStyle='#8a94a6'; ctx.font='12px system-ui'; ctx.fillText(`${gridCm} cm grid`,10,18); }
+function drawItems(){ for(const it of items){ const cx=it.x+it.w/2, cy=it.y+it.h/2; ctx.save(); ctx.translate(cx,cy); ctx.rotate(it.rot);
+  ctx.fillStyle=it.selected?'#3956ff55':'#2a2f3a'; ctx.strokeStyle=it.selected?'#8090ff':'#465067'; ctx.lineWidth=2; ctx.beginPath(); ctx.rect(-it.w/2,-it.h/2,it.w,it.h); ctx.fill(); ctx.stroke();
+  if(showNames){ ctx.fillStyle='#cbd3e1'; ctx.font='12px system-ui'; ctx.textAlign='center'; ctx.fillText(it.type,0,4); } ctx.restore();
+  if(it.selected){ ctx.strokeStyle='#9fb0ff'; ctx.setLineDash([5,4]); ctx.strokeRect(it.x,it.y,it.w,it.h); ctx.setLineDash([]); const s=12; ctx.fillStyle='#bcd';
+    ctx.fillRect(it.x-s,it.y-s,s,s); ctx.fillRect(it.x+it.w,it.y-s,s,s); ctx.fillRect(it.x-s,it.y+it.h,s,s); ctx.fillRect(it.x+it.w,it.y+it.h,s,s); } } }
+function draw(){ drawFloor(); drawGrid(); drawItems(); }
+draw();
+</script>
+</body>
+</html>
